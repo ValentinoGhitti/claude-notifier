@@ -1,0 +1,34 @@
+{
+  "_info": "Editá los paths a tus propios .wav. Usá null para desactivar un sonido o popup.",
+  "events": {
+    "waiting_input": {
+      "description": "Claude te hace una pregunta y espera tu respuesta",
+      "sound": "C:\\Windows\\Media\\Windows Notify System Generic.wav",
+      "volume": 1.0,
+      "popup": true,
+      "popup_title": "Claude Code",
+      "popup_message": "Claude está esperando tu respuesta 💬"
+    },
+    "waiting_permission": {
+      "description": "Claude pide permiso para ejecutar algo",
+      "sound": "C:\\Windows\\Media\\Windows Exclamation.wav",
+      "volume": 1.0,
+      "popup": true,
+      "popup_title": "Claude Code",
+      "popup_message": "Claude pide permiso para ejecutar un comando ⚠️"
+    },
+    "task_done": {
+      "description": "Claude terminó una tarea larga",
+      "sound": "C:\\Windows\\Media\\Windows Notify Calendar.wav",
+      "volume": 1.0,
+      "popup": true,
+      "popup_title": "Claude Code",
+      "popup_message": "Claude terminó la tarea ✅"
+    }
+  },
+  "options": {
+    "suppress_if_focused": false,
+    "delay_ms": 0,
+    "debounce_ms": 3000
+  }
+}

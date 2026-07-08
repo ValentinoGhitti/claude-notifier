@@ -1,0 +1,19 @@
+{
+  "name": "claude-notifier",
+  "version": "1.0.0",
+  "description": "Notificaciones nativas de Windows para Claude Code (sonido + popup)",
+  "main": "dist/notifier.js",
+  "scripts": {
+    "build": "tsc",
+    "setup": "ts-node scripts/setup.ts",
+    "test:sound": "ts-node src/notifier.ts task_done",
+    "test:waiting": "ts-node src/notifier.ts waiting_input",
+    "test:permission": "ts-node src/notifier.ts waiting_permission",
+    "start": "node dist/notifier.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "ts-node": "^10.9.2",
+    "@types/node": "^20.12.0"
+  }
+}
