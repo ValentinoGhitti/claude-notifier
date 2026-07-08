@@ -1,6 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
-import { exec, spawn } from "child_process";
+import { spawn } from "child_process";
+import notifier from "node-notifier";
+import playSoundLib from "play-sound";
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -9,7 +11,6 @@ type EventName = "waiting_input" | "waiting_permission" | "task_done";
 interface EventConfig {
   description: string;
   sound: string | null;
-  volume: number;
   popup: boolean;
   popup_title: string;
   popup_message: string;
@@ -19,7 +20,6 @@ interface SoundsConfig {
   _info: string;
   events: Record<EventName, EventConfig>;
   options: {
-    suppress_if_focused: boolean;
     delay_ms: number;
     debounce_ms: number;
   };
@@ -29,7 +29,7 @@ interface SoundsConfig {
 // Usamos un archivo temporal en lugar de estado en memoria porque cada
 // invocación del hook es un proceso nuevo (no hay estado compartido).
 
-const LOCK_DIR = path.join(process.env["TEMP"] ?? "C:\\Windows\\Temp", "claude-notifier");
+const LOCK_DIR = path.join(process.env["TEMP"] ?? process.env["TMPDIR"] ?? "/tmp", "claude-notifier");
 const KNOWN_EVENTS: EventName[] = ["waiting_input", "waiting_permission", "task_done"];
 
 function isKnownEvent(value: string): value is EventName {
@@ -71,6 +71,35 @@ function shouldDebounce(eventName: EventName, debounceMs: number): boolean {
 }
 
 // ── Reproducción de sonido ───────────────────────────────────────────────────
+// En Windows usamos un script de PowerShell propio (scripts/play-audio.ps1)
+// basado en System.Windows.Media.MediaPlayer, que a diferencia de
+// System.Media.SoundPlayer soporta mp3 además de wav. En Linux/macOS delegamos
+// en play-sound, que detecta el reproductor de línea de comandos disponible
+// en el sistema (mpg123, aplay, paplay, afplay, etc).
+
+const PLAY_AUDIO_SCRIPT = path.join(__dirname, "..", "scripts", "play-audio.ps1");
+const player = playSoundLib();
+
+function playSoundWindows(soundPath: string): void {
+  // detached + unref: el proceso de PowerShell sigue vivo aunque este script
+  // de Node termine antes de que termine de sonar el audio.
+  const child = spawn(
+    "powershell",
+    ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-File", PLAY_AUDIO_SCRIPT, soundPath],
+    { detached: true, stdio: "ignore", windowsHide: true },
+  );
+  child.unref();
+}
+
+function playSoundUnix(soundPath: string): void {
+  player.play(soundPath, (err) => {
+    if (err) {
+      process.stderr.write(
+        `[claude-notifier] No se pudo reproducir el sonido (¿falta instalar mpg123/aplay/afplay?): ${err}\n`,
+      );
+    }
+  });
+}
 
 function playSound(soundPath: string): void {
   if (!fs.existsSync(soundPath)) {
@@ -78,52 +107,23 @@ function playSound(soundPath: string): void {
     return;
   }
 
-  // Escapamos comillas simples en el path para PowerShell
-  const safePath = soundPath.replace(/'/g, "''");
-  const cmd =
-    `powershell -NoProfile -NonInteractive -WindowStyle Hidden -Command ` +
-    `"$p = New-Object System.Media.SoundPlayer '${safePath}'; $p.PlaySync()"`;
-
-  exec(cmd, (error) => {
-    if (error) {
-      process.stderr.write(`[claude-notifier] Error al reproducir sonido: ${error.message}\n`);
-    }
-  });
+  if (process.platform === "win32") {
+    playSoundWindows(soundPath);
+  } else {
+    playSoundUnix(soundPath);
+  }
 }
 
 // ── Notificación popup ───────────────────────────────────────────────────────
+// node-notifier abstrae la API nativa de cada SO: toasts de Windows,
+// notify-send en Linux, y Notification Center en macOS.
 
 function showPopup(title: string, message: string): void {
-  // Escapamos caracteres problemáticos para PowerShell
-  const safeTitle = title.replace(/'/g, "''").replace(/"/g, '\\"');
-  const safeMessage = message.replace(/'/g, "''").replace(/"/g, '\\"');
-
-  // Usamos NotifyIcon (bandeja del sistema) porque es la API más confiable
-  // para notificaciones balloon en Windows sin depender de WinRT/Toast.
-  const script = [
-    "Add-Type -AssemblyName System.Windows.Forms;",
-    "Add-Type -AssemblyName System.Drawing;",
-    "$n = New-Object System.Windows.Forms.NotifyIcon;",
-    "$n.Icon = [System.Drawing.SystemIcons]::Information;",
-    "$n.Visible = $true;",
-    `$n.ShowBalloonTip(5000, '${safeTitle}', '${safeMessage}', [System.Windows.Forms.ToolTipIcon]::None);`,
-    "Start-Sleep -Milliseconds 6000;",
-    "$n.Dispose();",
-  ].join(" ");
-
-  // detached: true para que el popup no bloquee el proceso del hook
-  const child = spawn("powershell", [
-    "-NoProfile",
-    "-NonInteractive",
-    "-WindowStyle", "Hidden",
-    "-Command", script,
-  ], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
+  notifier.notify({ title, message, sound: false }, (err) => {
+    if (err) {
+      process.stderr.write(`[claude-notifier] No se pudo mostrar el popup: ${err}\n`);
+    }
   });
-
-  child.unref();
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -187,8 +187,10 @@ function main(): void {
     setTimeout(() => process.exit(0), delay_ms + 500);
   } else {
     run();
-    // Damos 200 ms para que exec() de playSound alcance a lanzarse
-    setTimeout(() => process.exit(0), 200);
+    // Damos 300 ms para que el proceso detached de Windows arranque y para
+    // que node-notifier/play-sound lancen sus propios procesos hijos antes
+    // de salir (no hace falta esperar a que terminen de sonar/mostrarse).
+    setTimeout(() => process.exit(0), 300);
   }
 }
 
